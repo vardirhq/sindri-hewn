@@ -68,24 +68,29 @@ export function App() {
     });
     if (failures) setError(`${failures} image(s) could not be loaded.`);
   }, []);
-  const [result, setResult] = useState<{ canvas: HTMLCanvasElement | null; frames: Frame[]; error: string } | null>(null);
+  const [page, setPage] = useState(0);
+  const [result, setResult] = useState<{ canvases: HTMLCanvasElement[]; frames: Frame[]; error: string } | null>(null);
   useEffect(() => {
     let cancelled = false;
     if (!sprites.length) { setResult(null); return; }
     setResult(null);
+    setPage(0);
     void createAtlas(sprites, width, height, padding, trim).then(
       atlas => { if (!cancelled) setResult({ ...atlas, error: "" }); },
-      reason => { if (!cancelled) setResult({ canvas: null, frames: [], error: String(reason) }); }
+      reason => { if (!cancelled) setResult({ canvases: [], frames: [], error: String(reason) }); }
     );
     return () => { cancelled = true; };
   }, [sprites, width, height, padding, trim]);
-  const preview = useMemo(() => result?.canvas?.toDataURL("image/png") ?? null, [result]);
+  const preview = useMemo(() => result?.canvases[page]?.toDataURL("image/png") ?? null, [result, page]);
+  const pageCount = result?.canvases.length ?? 0;
+  const pageName = (index: number) => pageCount === 1 ? "hewn-atlas.png" : `hewn-atlas-${index + 1}.png`;
+  const utilization = pageCount ? (100 * (result?.frames.reduce((sum, frame) => sum + frame.width * frame.height, 0) ?? 0) / (pageCount * width * height)).toFixed(1) : "0";
   const active = sprites.find(s => s.name === selected);
   const exportMetadata = () => {
     if (!result || result.error) return;
     saveBlob(new Blob([JSON.stringify({
-      generator: "Sindri: Hewn", version: 1,
-      image: "hewn-atlas.png", width, height, padding, trim, frames: result.frames
+      generator: "Sindri: Hewn", version: 2,
+      pages: result.canvases.map((_, index) => ({ index, image: pageName(index) })), width, height, padding, trim, frames: result.frames
     }, null, 2)], {type:"application/json"}), "hewn-atlas.json");
   };
 
@@ -116,7 +121,7 @@ export function App() {
         <div className="toolbar-actions">
           <button className="ghost" onClick={()=>{setSprites([]);setSelected(null);setError("");}} title="Clear workspace"><Trash2 size={16}/><span>Clear</span></button>
           <button className="ghost" onClick={()=>input.current?.click()}><Plus size={16}/> Import</button>
-          <button className="primary" disabled={!result?.canvas} onClick={()=>result?.canvas&&saveAtlas(result.canvas)}><ArrowDownToLine size={16}/> Export PNG</button>
+          <button className="primary" disabled={!pageCount} onClick={()=>result?.canvases.forEach((canvas, index)=>saveAtlas(canvas, pageName(index)))}><ArrowDownToLine size={16}/> Export PNGs</button>
         </div>
       </header>
       <FileDrop onFiles={importFiles}><div className="canvas-header"><div><span className="eyebrow">WORKBENCH / {section.toUpperCase()}</span><h1>{section==="atlas"?"Texture atlas":"Your assets"}</h1><p>{section==="atlas"?"Arrange, inspect, and export your sprites in one place.":"All imported sprites, ready for your next creation."}</p></div>
@@ -124,7 +129,7 @@ export function App() {
         {error && <div className="error" role="alert">{error}</div>}
         {result?.error && <div className="error" role="alert">{result.error}</div>}
         {section === "assets" && sprites.length > 0 ? <div className="asset-cards">{sprites.map(s=><button key={s.name} onClick={()=>setSelected(s.name)} className={selected===s.name?"chosen":""}><div className="asset-thumb"><img src={s.preview} alt={s.name}/></div><strong>{s.name}</strong><small>{s.width} × {s.height} px</small></button>)}</div> :
-        section === "atlas" && preview ? <div className="preview-wrap"><div className="preview-top"><span><Grid3X3 size={15}/> ATLAS PREVIEW</span><span>{width} × {height} px</span></div><div className="preview-canvas"><div className={showGrid?"atlas-preview checker":"atlas-preview"} style={{width:Math.min(100,zoom)+"%",aspectRatio:`${width}/${height}`}}><img src={preview} alt="Generated texture atlas" /></div></div></div> :
+        section === "atlas" && preview ? <div className="preview-wrap"><div className="preview-top"><span><Grid3X3 size={15}/> ATLAS PREVIEW</span><span>{width} × {height} px</span><label>Page <select value={page} onChange={e=>setPage(Number(e.target.value))}>{result?.canvases.map((_, index)=><option key={index} value={index}>{index+1} / {pageCount}</option>)}</select></label></div><div className="preview-canvas"><div className={showGrid?"atlas-preview checker":"atlas-preview"} style={{width:Math.min(100,zoom)+"%",aspectRatio:`${width}/${height}`}}><img src={preview} alt="Generated texture atlas" /></div></div></div> :
         <div className="drop-zone"><div className="drop-art"><div className="drop-art-secondary"><FileImage size={30}/></div><div className="drop-art-primary"><PackageOpen size={36}/></div></div><h2>Every asset in its place.</h2><p>Drop your PNG sprites here, or import a few files to start building your first atlas.</p><button className="primary large" onClick={()=>input.current?.click()}><UploadCloud size={17}/> Import PNG files</button><button className="text-button" onClick={async()=>{setError("");setSprites(await demoSprites());setSelected(null);}}>Or try with sample assets <ChevronRight size={15}/></button></div>}
         <div className="bottom-bar"><span><span className="status-dot"/> Ready</span><span>{sprites.length} sprites <span className="sep">·</span> {result?.frames.length??0} packed <span className="sep">·</span> PNG</span></div>
       </FileDrop>
@@ -136,9 +141,9 @@ export function App() {
         <label className="toggle-row"><span>Trim transparency<small>Remove unused transparent edges</small></span><input type="checkbox" checked={trim} onChange={e=>setTrim(e.target.checked)}/></label>
         <label className="toggle-row"><span>Checkerboard<small>Show transparent background</small></span><input type="checkbox" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)}/></label>
       </div>
-      <div className="inspector-section"><div className="label">VIEW</div><label className="field">Preview scale<select value={zoom} onChange={e=>setZoom(Number(e.target.value))}>{[25,50,75,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label></div>
+      <div className="inspector-section"><div className="label">VIEW</div><div className="stat"><span>Atlas pages</span><strong>{pageCount}</strong></div><div className="stat"><span>Frame coverage</span><strong>{utilization}%</strong></div><label className="field">Preview scale<select value={zoom} onChange={e=>setZoom(Number(e.target.value))}>{[25,50,75,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label></div>
       <div className="inspector-spacer"/>
-      <div className="export-panel"><div className="export-title"><Archive size={17}/> Export resources</div><p>Your original images stay untouched.</p><button className="secondary-button" disabled={!result?.canvas} onClick={exportMetadata}><ArrowDownToLine size={15}/> Export JSON metadata</button></div>
+      <div className="export-panel"><div className="export-title"><Archive size={17}/> Export resources</div><p>Your original images stay untouched.</p><button className="secondary-button" disabled={!pageCount} onClick={exportMetadata}><ArrowDownToLine size={15}/> Export JSON metadata</button></div>
     </aside>
     <input ref={input} type="file" multiple accept=".png,image/png" hidden onChange={e=>{if(e.target.files)void importFiles(e.target.files);e.target.value="";}}/>
   </div>;
