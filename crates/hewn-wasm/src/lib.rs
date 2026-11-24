@@ -80,11 +80,16 @@ pub fn pack_rgba(
     if offset != pixels.len() {
         return Err(JsValue::from_str("Sprite pixel buffer has trailing bytes"));
     }
-    let pages = pack_pages(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let frames_json = serde_json::to_string(&pages.iter().map(|page| &page.frames).collect::<Vec<_>>())
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let pages =
+        pack_pages(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let frames_json =
+        serde_json::to_string(&pages.iter().map(|page| &page.frames).collect::<Vec<_>>())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
     Ok(PackedAtlas {
-        pixels: pages.into_iter().map(|page| page.image.into_raw()).collect(),
+        pixels: pages
+            .into_iter()
+            .map(|page| page.image.into_raw())
+            .collect(),
         width: options.width,
         height: options.height,
         frames_json,
