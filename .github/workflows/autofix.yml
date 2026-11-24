@@ -1,0 +1,66 @@
+name: Autofix
+
+# Keep formatting enforcement strict while repairing mechanical formatting
+# changes directly on same-repository pull request branches.
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: autofix-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rustfmt:
+    name: Apply Rust formatting
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format Rust sources
+        run: cargo fmt --all
+      - name: Commit and push formatting
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git add --update -- '*.rs'
+          if git diff --cached --quiet; then
+            echo "Rust formatting is already current."
+            exit 0
+          fi
+
+          if [[ "$(git log -1 --format=%s)" == "Apply automatic Rust formatting" ]]; then
+            echo "::error::Formatting did not converge after the previous autofix."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Apply automatic Rust formatting"
+
+          if ! git push "https://x-access-token:${GH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"; then
+            current="$(gh api "repos/${REPOSITORY}/branches/${HEAD_REF}" --jq .commit.sha || true)"
+            if [[ -n "$current" && "$current" != "$HEAD_SHA" ]]; then
+              echo "::notice::Branch moved; its newer commit will receive its own autofix run."
+              exit 0
+            fi
+            echo "::error::Autofix push was refused. Check Actions write permissions and repository rules."
+            exit 1
+          fi
+
+          # GITHUB_TOKEN pushes do not trigger pull_request workflows.
+          # Explicitly dispatch CI on the new formatted branch head.
+          gh workflow run ci.yml --ref "$HEAD_REF"
