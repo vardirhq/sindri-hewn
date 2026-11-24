@@ -116,29 +116,43 @@ fn occupy(free: &mut Vec<Rect>, used: Rect) {
             continue;
         }
         if used.x > region.x {
-            next.push(Rect { x: region.x, y: region.y, w: used.x - region.x, h: region.h });
+            next.push(Rect {
+                x: region.x,
+                y: region.y,
+                w: used.x - region.x,
+                h: region.h,
+            });
         }
         if used.x + used.w < region.x + region.w {
             next.push(Rect {
-                x: used.x + used.w, y: region.y,
-                w: region.x + region.w - used.x - used.w, h: region.h,
+                x: used.x + used.w,
+                y: region.y,
+                w: region.x + region.w - used.x - used.w,
+                h: region.h,
             });
         }
         if used.y > region.y {
-            next.push(Rect { x: region.x, y: region.y, w: region.w, h: used.y - region.y });
+            next.push(Rect {
+                x: region.x,
+                y: region.y,
+                w: region.w,
+                h: used.y - region.y,
+            });
         }
         if used.y + used.h < region.y + region.h {
             next.push(Rect {
-                x: region.x, y: used.y + used.h,
-                w: region.w, h: region.y + region.h - used.y - used.h,
+                x: region.x,
+                y: used.y + used.h,
+                w: region.w,
+                h: region.y + region.h - used.y - used.h,
             });
         }
     }
     next.retain(|r| r.w > 0 && r.h > 0);
     let mut i = 0;
     while i < next.len() {
-        if (0..next.len()).any(|j| i != j && next[j].contains(next[i])
-            && (j < i || next[j] != next[i]))
+        if (0..next.len())
+            .any(|j| i != j && next[j].contains(next[i]) && (j < i || next[j] != next[i]))
         {
             next.remove(i);
         } else {
@@ -155,7 +169,12 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         return Err(AtlasError::InvalidDimensions);
     }
     let mut atlas = RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0]));
-    let mut free = vec![Rect { x: 0, y: 0, w: options.width, h: options.height }];
+    let mut free = vec![Rect {
+        x: 0,
+        y: 0,
+        w: options.width,
+        h: options.height,
+    }];
     let mut frames = Vec::with_capacity(sources.len());
     for source in sources {
         let original = &source.image;
@@ -165,8 +184,11 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
             (0, 0, original.width().max(1), original.height().max(1))
         };
         let fail = || AtlasError::DoesNotFit {
-            name: source.name.clone(), width, height,
-            atlas_width: options.width, atlas_height: options.height,
+            name: source.name.clone(),
+            width,
+            height,
+            atlas_width: options.width,
+            atlas_height: options.height,
         };
         if width > options.width || height > options.height {
             return Err(fail());
@@ -174,7 +196,9 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         // Padding is a gap between sprites, not a mandatory outer border.
         let padded_w = width.saturating_add(options.padding).min(options.width);
         let padded_h = height.saturating_add(options.padding).min(options.height);
-        let candidate = free.iter().filter(|r| r.w >= padded_w && r.h >= padded_h)
+        let candidate = free
+            .iter()
+            .filter(|r| r.w >= padded_w && r.h >= padded_h)
             .min_by_key(|r| {
                 let dx = r.w - padded_w;
                 let dy = r.h - padded_h;
@@ -182,21 +206,38 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
             })
             .copied()
             .ok_or_else(fail)?;
-        let used = Rect { x: candidate.x, y: candidate.y, w: padded_w, h: padded_h };
+        let used = Rect {
+            x: candidate.x,
+            y: candidate.y,
+            w: padded_w,
+            h: padded_h,
+        };
         for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
             for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
-                atlas.put_pixel(used.x + dx, used.y + dy,
-                    *original.get_pixel(offset_x + dx, offset_y + dy));
+                atlas.put_pixel(
+                    used.x + dx,
+                    used.y + dy,
+                    *original.get_pixel(offset_x + dx, offset_y + dy),
+                );
             }
         }
         frames.push(Frame {
-            name: source.name.clone(), x: used.x, y: used.y, width, height,
-            source_width: original.width(), source_height: original.height(),
-            offset_x, offset_y,
+            name: source.name.clone(),
+            x: used.x,
+            y: used.y,
+            width,
+            height,
+            source_width: original.width(),
+            source_height: original.height(),
+            offset_x,
+            offset_y,
         });
         occupy(&mut free, used);
     }
-    Ok(Atlas { image: atlas, frames })
+    Ok(Atlas {
+        image: atlas,
+        frames,
+    })
 }
 
 #[cfg(test)]
@@ -244,7 +285,10 @@ mod tests {
         let b = pack(&images, options).unwrap();
         assert_eq!(a.frames, b.frames);
         assert_eq!(a.frames.len(), 3);
-        assert!(a.frames.iter().all(|frame| frame.x + frame.width <= 8 && frame.y + frame.height <= 12));
+        assert!(a
+            .frames
+            .iter()
+            .all(|frame| frame.x + frame.width <= 8 && frame.y + frame.height <= 12));
     }
 
     #[test]
@@ -268,30 +312,58 @@ mod tests {
     #[test]
     fn packs_into_gaps_that_shelves_waste() {
         let sizes = [(6, 4), (4, 6), (2, 6)];
-        let sources = sizes.iter().enumerate().map(|(i, &(w, h))| SourceImage {
-            name: format!("tile-{i}"),
-            image: RgbaImage::from_pixel(w, h, Rgba([i as u8, 20, 30, 255])),
-        }).collect::<Vec<_>>();
-        let options = AtlasOptions { width: 10, height: 10, padding: 0, trim: false };
+        let sources = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &(w, h))| SourceImage {
+                name: format!("tile-{i}"),
+                image: RgbaImage::from_pixel(w, h, Rgba([i as u8, 20, 30, 255])),
+            })
+            .collect::<Vec<_>>();
+        let options = AtlasOptions {
+            width: 10,
+            height: 10,
+            padding: 0,
+            trim: false,
+        };
         let atlas = pack(&sources, options).unwrap();
         assert_eq!(atlas.frames.len(), 3);
         for (i, a) in atlas.frames.iter().enumerate() {
             for b in atlas.frames.iter().skip(i + 1) {
-                assert!(!Rect { x: a.x, y: a.y, w: a.width, h: a.height }
-                    .intersects(Rect { x: b.x, y: b.y, w: b.width, h: b.height }));
+                assert!(!Rect {
+                    x: a.x,
+                    y: a.y,
+                    w: a.width,
+                    h: a.height
+                }
+                .intersects(Rect {
+                    x: b.x,
+                    y: b.y,
+                    w: b.width,
+                    h: b.height
+                }));
             }
         }
     }
 
     #[test]
     fn padding_keeps_frames_apart() {
-        let sources = (0..4).map(|i| SourceImage {
-            name: format!("tile-{i}"),
-            image: RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
-        }).collect::<Vec<_>>();
-        let atlas = pack(&sources, AtlasOptions {
-            width: 8, height: 8, padding: 1, trim: false,
-        }).unwrap();
+        let sources = (0..4)
+            .map(|i| SourceImage {
+                name: format!("tile-{i}"),
+                image: RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
+            })
+            .collect::<Vec<_>>();
+        let atlas = pack(
+            &sources,
+            AtlasOptions {
+                width: 8,
+                height: 8,
+                padding: 1,
+                trim: false,
+            },
+        )
+        .unwrap();
         for (i, a) in atlas.frames.iter().enumerate() {
             for b in atlas.frames.iter().skip(i + 1) {
                 let gap_x = a.x + a.width < b.x || b.x + b.width < a.x;
