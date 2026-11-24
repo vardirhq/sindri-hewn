@@ -50,6 +50,8 @@ pub struct Atlas {
 pub enum AtlasError {
     #[error("Atlas dimensions must be non-zero")]
     InvalidDimensions,
+    #[error("Unsupported optimization texture limit")]
+    InvalidLimit,
     #[error("Sprite {name} ({width}x{height}) cannot fit in {atlas_width}x{atlas_height} atlas")]
     DoesNotFit {
         name: String,
@@ -165,7 +167,7 @@ fn occupy(free: &mut Vec<Rect>, used: Rect) {
 /// Deterministic best-short-side-fit rectangle packing. Input order is
 /// preserved in frame metadata, and ties favor top-left placement.
 pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, AtlasError> {
-    let mut pages = pack_internal(sources, options, false)?;
+    let mut pages = pack_internal(sources, options, false, true)?;
     Ok(pages.remove(0))
 }
 
@@ -174,19 +176,24 @@ pub fn pack_pages(
     sources: &[SourceImage],
     options: AtlasOptions,
 ) -> Result<Vec<Atlas>, AtlasError> {
-    pack_internal(sources, options, true)
+    pack_internal(sources, options, true, true)
 }
 
 fn pack_internal(
     sources: &[SourceImage],
     options: AtlasOptions,
     multiple: bool,
+    render: bool,
 ) -> Result<Vec<Atlas>, AtlasError> {
     if options.width == 0 || options.height == 0 {
         return Err(AtlasError::InvalidDimensions);
     }
     let new_page = || Atlas {
-        image: RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0])),
+        image: if render {
+            RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0]))
+        } else {
+            RgbaImage::new(0, 0)
+        },
         frames: Vec::new(),
     };
     let new_free = || {
@@ -251,13 +258,15 @@ fn pack_internal(
             w: padded_w,
             h: padded_h,
         };
-        for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
-            for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
-                atlas.image.put_pixel(
-                    used.x + dx,
-                    used.y + dy,
-                    *original.get_pixel(offset_x + dx, offset_y + dy),
-                );
+        if render {
+            for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
+                for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
+                    atlas.image.put_pixel(
+                        used.x + dx,
+                        used.y + dy,
+                        *original.get_pixel(offset_x + dx, offset_y + dy),
+                    );
+                }
             }
         }
         atlas.frames.push(Frame {
@@ -276,9 +285,150 @@ fn pack_internal(
     Ok(pages)
 }
 
+/// Recommendation from a geometry-only search of supported power-of-two sizes.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct Recommendation {
+    pub width: u32,
+    pub height: u32,
+    pub pages: usize,
+    pub bytes: u64,
+}
+
+pub fn optimize(
+    sources: &[SourceImage],
+    options: AtlasOptions,
+) -> Result<Recommendation, AtlasError> {
+    optimize_with(sources, options, OptimizationProfile::Memory, 4096)
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationProfile {
+    Memory,
+    Performance,
+    Balanced,
+}
+
+pub fn optimize_with(
+    sources: &[SourceImage],
+    options: AtlasOptions,
+    profile: OptimizationProfile,
+    limit: u32,
+) -> Result<Recommendation, AtlasError> {
+    if ![128, 256, 512, 1024, 2048, 4096].contains(&limit) {
+        return Err(AtlasError::InvalidLimit);
+    }
+    let mut best: Option<Recommendation> = None;
+    for width in [128, 256, 512, 1024, 2048, 4096] {
+        for height in [128, 256, 512, 1024, 2048, 4096] {
+            if width > limit || height > limit {
+                continue;
+            }
+            let candidate = AtlasOptions {
+                width,
+                height,
+                ..options
+            };
+            let Ok(pages) = pack_internal(sources, candidate, true, false) else {
+                continue;
+            };
+            let result = Recommendation {
+                width,
+                height,
+                pages: pages.len(),
+                bytes: u64::from(width) * u64::from(height) * 4 * pages.len() as u64,
+            };
+            let score = |r: &Recommendation| {
+                let pages = r.pages as u64;
+                let (primary, secondary) = match profile {
+                    OptimizationProfile::Memory => (r.bytes, pages),
+                    OptimizationProfile::Performance => (pages, r.bytes),
+                    OptimizationProfile::Balanced => (
+                        r.bytes.saturating_add(pages.saturating_mul(262144)),
+                        r.bytes,
+                    ),
+                };
+                (primary, secondary, r.width.abs_diff(r.height), r.width)
+            };
+            if best.as_ref().is_none_or(|old| score(&result) < score(old)) {
+                best = Some(result);
+            }
+        }
+    }
+    if let Some(best) = best {
+        return Ok(best);
+    }
+    // Return the actual oversized sprite error rather than a generic failure.
+    pack_internal(
+        sources,
+        AtlasOptions {
+            width: limit,
+            height: limit,
+            ..options
+        },
+        true,
+        false,
+    )?;
+    Err(AtlasError::InvalidDimensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optimizer_prefers_smallest_memory_and_matches_rendered_pages() {
+        let sources = vec![SourceImage {
+            name: "small".into(),
+            image: RgbaImage::new(16, 16),
+        }];
+        let options = AtlasOptions::default();
+        let best = optimize(&sources, options).unwrap();
+        assert_eq!(
+            (best.width, best.height, best.pages, best.bytes),
+            (128, 128, 1, 65536)
+        );
+        assert_eq!(best, optimize(&sources, options).unwrap());
+        let pages = pack_pages(
+            &sources,
+            AtlasOptions {
+                width: best.width,
+                height: best.height,
+                ..options
+            },
+        )
+        .unwrap();
+        assert_eq!(pages.len(), best.pages);
+    }
+
+    #[test]
+    fn profiles_respect_limits_and_priorities() {
+        let sources = (0..3)
+            .map(|i| SourceImage {
+                name: format!("sprite-{i}"),
+                image: RgbaImage::new(128, 128),
+            })
+            .collect::<Vec<_>>();
+        let options = AtlasOptions {
+            trim: false,
+            padding: 0,
+            ..AtlasOptions::default()
+        };
+        let memory = optimize_with(&sources, options, OptimizationProfile::Memory, 256).unwrap();
+        let performance =
+            optimize_with(&sources, options, OptimizationProfile::Performance, 256).unwrap();
+        let balanced =
+            optimize_with(&sources, options, OptimizationProfile::Balanced, 256).unwrap();
+        assert_eq!(memory.pages, 3);
+        assert_eq!(performance.pages, 1);
+        assert_eq!(balanced.pages, 1);
+        assert_eq!(
+            optimize_with(&sources, options, OptimizationProfile::Performance, 128)
+                .unwrap()
+                .pages,
+            3
+        );
+    }
 
     #[test]
     fn trims_and_preserves_source_offsets() {
