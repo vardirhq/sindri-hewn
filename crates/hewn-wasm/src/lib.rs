@@ -102,10 +102,15 @@ fn decode_sources(pixels: &[u8], manifest_json: &str) -> Result<Vec<SourceImage>
 }
 
 #[wasm_bindgen]
-pub fn optimize_rgba(pixels: &[u8], manifest_json: &str, options_json: &str) -> Result<String, JsValue> {
+pub fn optimize_rgba(
+    pixels: &[u8],
+    manifest_json: &str,
+    options_json: &str,
+) -> Result<String, JsValue> {
     let options: AtlasOptions = serde_json::from_str(options_json)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     let sources = decode_sources(pixels, manifest_json)?;
-    let result = optimize(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let result =
+        optimize(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
     serde_json::to_string(&result).map_err(|error| JsValue::from_str(&error.to_string()))
 }
