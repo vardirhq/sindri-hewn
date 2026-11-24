@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "dev": "npm run wasm && vite --host 0.0.0.0",
+    "build": "npm run wasm && tsc -b && vite build",
+    "wasm": "bash scripts/build-wasm.sh",
     "preview": "vite preview"
   },
   "dependencies": {

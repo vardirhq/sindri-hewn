@@ -2,17 +2,19 @@
 
 **Raw assets, refined.**
 
+See [ROADMAP.md](ROADMAP.md) for the full product vision, feature plan, architecture, priorities, and acceptance criteria.
+
 Hewn is an offline-first, non-destructive game asset preparation studio. Organize loose PNG sprites, trim transparent edges, and build texture atlases with source offsets preserved.
 
 ## Current state
 
 The initial foundation includes:
-- **Browser workbench** built with React, TypeScript, and Vite. Import and inspect PNGs, preview an atlas, adjust trimming, atlas dimensions and padding, and export a PNG plus JSON metadata.
-- **Rust core library** with deterministic shelf packing, alpha trimming, offsets, overflow reporting, and unit tests.
+- **Browser workbench** built with React, TypeScript, Vite, and Rust WebAssembly. Import and inspect PNGs, preview an atlas, adjust trimming, atlas dimensions and padding, and export a PNG plus JSON metadata.
+- **Shared Rust core library** with deterministic shelf packing, alpha trimming, offsets, overflow reporting, and unit tests.
 - Sample sprites in the web UI for exploring the workflow without supplying files.
 - GitHub Actions builds for Rust and web.
 
-**Important:** The browser prototype currently implements its own packing logic. WASM integration is planned so both front ends use the same Rust implementation. No Tauri wrapper exists yet.
+**Important:** The browser now packs through the Rust core via WebAssembly. No Tauri wrapper exists yet.
 
 ## Run locally
 
@@ -21,6 +23,8 @@ The initial foundation includes:
 ```bash
 cd apps/web
 npm install
+cargo install wasm-pack --locked
+rustup target add wasm32-unknown-unknown
 npm run dev
 ```
 
@@ -38,12 +42,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ```text
 crates/hewn-core/  Portable image + atlas processing
+crates/hewn-wasm/  WebAssembly adapter for hewn-core
 apps/web/          Browser UI and initial local atlas workflow
 ```
 
 ## Next milestones
 
-1. Unify UI and Rust core through WebAssembly.
+1. Add Rust/WASM parity fixtures and improve browser error reporting.
 2. Multiple pages / smarter rectangle packing with collision-free atlas placement.
 3. Project saving, semantic grouping, duplicate detection, and animation sequences.
 4. Terrain composer, bitmask rules, and map preview.
