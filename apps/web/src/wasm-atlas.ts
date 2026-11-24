@@ -13,7 +13,7 @@ function ready() {
 /** All geometry, alpha trimming, and packing are performed by hewn-core. */
 export async function createAtlas(
   sprites: Sprite[], width: number, height: number, padding: number, trim: boolean
-): Promise<{ canvas: HTMLCanvasElement; frames: Frame[] }> {
+): Promise<{ canvases: HTMLCanvasElement[]; frames: Frame[] }> {
   await ready();
   const manifest = sprites.map(({ name, width, height }) => ({ name, width, height }));
   const total = sprites.reduce((sum, s) => sum + s.width * s.height * 4, 0);
@@ -33,22 +33,26 @@ export async function createAtlas(
   }
   const atlas = pack_rgba(pixels, JSON.stringify(manifest), JSON.stringify({ width, height, padding, trim }));
   try {
+    const canvases = Array.from({ length: atlas.page_count() }, (_, page) => {
     const canvas = document.createElement("canvas");
     canvas.width = atlas.width;
     canvas.height = atlas.height;
     const target = canvas.getContext("2d");
     if (!target) throw new Error("Canvas is unavailable");
-    const rgba = atlas.pixels();
+    const rgba = atlas.pixels(page);
     target.putImageData(new ImageData(new Uint8ClampedArray(rgba), atlas.width, atlas.height), 0, 0);
+    return canvas;
+    });
     const frames = (JSON.parse(atlas.frames_json()) as Array<{
       name: string; x: number; y: number; width: number; height: number;
       source_width: number; source_height: number; offset_x: number; offset_y: number;
-    }>).map(frame => ({
+    }>[]).flatMap((frames, page) => frames.map(frame => ({
+      page,
       name: frame.name, x: frame.x, y: frame.y, width: frame.width, height: frame.height,
       sourceWidth: frame.source_width, sourceHeight: frame.source_height,
       offsetX: frame.offset_x, offsetY: frame.offset_y
-    }));
-    return { canvas, frames };
+    })));
+    return { canvases, frames };
   } finally {
     atlas.free();
   }
