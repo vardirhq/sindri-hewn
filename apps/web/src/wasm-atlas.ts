@@ -1,48 +1,43 @@
-import init, { pack_rgba, optimize_rgba } from "./generated/hewn_wasm.js";
 import type { Frame, Sprite } from "./atlas";
 
-let initialized: Promise<void> | undefined;
-function ready() {
-  initialized ??= init().then(() => undefined).catch(error => {
-    initialized = undefined;
-    throw error;
+function runWorker<T>(request: object, pixels: Uint8Array, signal?: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException("Cancelled", "AbortError")); return; }
+    const worker = new Worker(new URL("./atlas.worker.ts", import.meta.url), { type: "module" });
+    const cleanup = () => { worker.terminate(); signal?.removeEventListener("abort", abort); };
+    const abort = () => { cleanup(); reject(new DOMException("Cancelled", "AbortError")); };
+    signal?.addEventListener("abort", abort, { once: true });
+    worker.onmessage = event => {
+      cleanup();
+      if (event.data.error !== undefined) reject(new Error(event.data.error));
+      else resolve(event.data.result as T);
+    };
+    worker.onerror = event => { cleanup(); reject(new Error(event.message || "Atlas worker failed")); };
+    worker.onmessageerror = () => { cleanup(); reject(new Error("Invalid atlas worker response")); };
+    try { worker.postMessage({ ...request, pixels }, [pixels.buffer]); }
+    catch (error) { cleanup(); reject(error); }
   });
-  return initialized;
 }
-
-/** All geometry, alpha trimming, and packing are performed by hewn-core. */
-export async function createAtlas(
-  sprites: Sprite[], width: number, height: number, padding: number, trim: boolean
-): Promise<{ canvases: HTMLCanvasElement[]; frames: Frame[] }> {
-  await ready();
+type RawFrame = { name: string; x: number; y: number; width: number; height: number; source_width: number; source_height: number; offset_x: number; offset_y: number };
+type RawAtlas = { width: number; height: number; pages: Uint8Array[]; frames: RawFrame[][] };
+export async function createAtlas(sprites: Sprite[], width: number, height: number, padding: number, trim: boolean, signal?: AbortSignal): Promise<{ canvases: HTMLCanvasElement[]; frames: Frame[] }> {
   const { pixels, manifest } = encodeSprites(sprites);
-  const atlas = pack_rgba(pixels, JSON.stringify(manifest), JSON.stringify({ width, height, padding, trim }));
-  try {
-    const canvases = Array.from({ length: atlas.page_count() }, (_, page) => {
+  const atlas = await runWorker<RawAtlas>({ kind: "pack", manifest: JSON.stringify(manifest), options: JSON.stringify({ width, height, padding, trim }) }, pixels, signal);
+  const canvases = atlas.pages.map(rgba => {
     const canvas = document.createElement("canvas");
     canvas.width = atlas.width;
     canvas.height = atlas.height;
     const target = canvas.getContext("2d");
     if (!target) throw new Error("Canvas is unavailable");
-    const rgba = atlas.pixels(page);
     target.putImageData(new ImageData(new Uint8ClampedArray(rgba), atlas.width, atlas.height), 0, 0);
     return canvas;
-    });
-    const frames = (JSON.parse(atlas.frames_json()) as Array<{
-      name: string; x: number; y: number; width: number; height: number;
-      source_width: number; source_height: number; offset_x: number; offset_y: number;
-    }>[]).flatMap((frames, page) => frames.map(frame => ({
-      page,
-      name: frame.name, x: frame.x, y: frame.y, width: frame.width, height: frame.height,
-      sourceWidth: frame.source_width, sourceHeight: frame.source_height,
-      offsetX: frame.offset_x, offsetY: frame.offset_y
-    })));
-    return { canvases, frames };
-  } finally {
-    atlas.free();
-  }
+  });
+  const frames = atlas.frames.flatMap((frames, page) => frames.map(frame => ({
+    page, name: frame.name, x: frame.x, y: frame.y, width: frame.width, height: frame.height,
+    sourceWidth: frame.source_width, sourceHeight: frame.source_height, offsetX: frame.offset_x, offsetY: frame.offset_y
+  })));
+  return { canvases, frames };
 }
-
 function encodeSprites(sprites: Sprite[]) {
   const manifest = sprites.map(({ name, width, height }) => ({ name, width, height }));
   const total = sprites.reduce((sum, s) => sum + s.width * s.height * 4, 0);
@@ -63,10 +58,10 @@ function encodeSprites(sprites: Sprite[]) {
   return { pixels, manifest };
 }
 
-export type Recommendation = { width: number; height: number; pages: number; bytes: number };
 
-export async function optimizeAtlas(sprites: Sprite[], padding: number, trim: boolean): Promise<Recommendation> {
-  await ready();
+export type Recommendation = { width: number; height: number; pages: number; bytes: number };
+export type OptimizationProfile = "memory" | "performance" | "balanced";
+export async function optimizeAtlas(sprites: Sprite[], padding: number, trim: boolean, profile: OptimizationProfile, limit: number, signal?: AbortSignal): Promise<Recommendation> {
   const { pixels, manifest } = encodeSprites(sprites);
-  return JSON.parse(optimize_rgba(pixels, JSON.stringify(manifest), JSON.stringify({ width: 128, height: 128, padding, trim }))) as Recommendation;
+  return runWorker<Recommendation>({ kind: "optimize", manifest: JSON.stringify(manifest), options: JSON.stringify({ width: 128, height: 128, padding, trim }), profile, limit }, pixels, signal);
 }
