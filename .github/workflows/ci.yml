@@ -4,17 +4,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Autofix dispatches CI on the commit it pushes with GITHUB_TOKEN.
+  workflow_dispatch:
 
 jobs:
-  rust:
+  formatting:
+    name: Rust formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-      - name: Normalize formatting before compilation
-        run: cargo fmt --all
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+  rust:
+    name: Rust checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
   web:
