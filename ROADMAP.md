@@ -185,6 +185,8 @@ bytes; never silently rewrite an imported file.
 - [ ] Validate large inputs, memory use, and error messages.
 
 ### M2: Dependable atlas production
+- [ ] Verify Auto Optimize (implemented in feature branch): compare supported rectangular power-of-two sizes using geometry-only packing, minimize RGBA8 allocation, break ties by page count, and offer explicit application of recommendations.
+- [ ] Future optimization profiles: prioritize fewer pages, balanced memory, or target-engine limits.
 - [ ] Replace/augment shelf packing with deterministic efficient rectangles.
 - [ ] Add multi-page atlases and utilization feedback.
 - [ ] Validate padding, edge cases, overlaps, and metadata with fixtures.
