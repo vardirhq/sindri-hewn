@@ -50,6 +50,8 @@ pub struct Atlas {
 pub enum AtlasError {
     #[error("Atlas dimensions must be non-zero")]
     InvalidDimensions,
+    #[error("Unsupported optimization texture limit")]
+    InvalidLimit,
     #[error("Sprite {name} ({width}x{height}) cannot fit in {atlas_width}x{atlas_height} atlas")]
     DoesNotFit {
         name: String,
@@ -296,9 +298,25 @@ pub fn optimize(
     sources: &[SourceImage],
     options: AtlasOptions,
 ) -> Result<Recommendation, AtlasError> {
+    optimize_with(sources, options, OptimizationProfile::Memory, 4096)
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OptimizationProfile {
+    Memory,
+    Performance,
+    Balanced,
+}
+
+pub fn optimize_with(sources: &[SourceImage], options: AtlasOptions, profile: OptimizationProfile, limit: u32) -> Result<Recommendation, AtlasError> {
+    if ![128, 256, 512, 1024, 2048, 4096].contains(&limit) {
+        return Err(AtlasError::InvalidLimit);
+    }
     let mut best: Option<Recommendation> = None;
     for width in [128, 256, 512, 1024, 2048, 4096] {
         for height in [128, 256, 512, 1024, 2048, 4096] {
+            if width > limit || height > limit { continue; }
             let candidate = AtlasOptions {
                 width,
                 height,
@@ -313,8 +331,15 @@ pub fn optimize(
                 pages: pages.len(),
                 bytes: u64::from(width) * u64::from(height) * 4 * pages.len() as u64,
             };
-            let score =
-                |r: &Recommendation| (r.bytes, r.pages, r.width.abs_diff(r.height), r.width);
+            let score = |r: &Recommendation| {
+                let pages = r.pages as u64;
+                let (primary, secondary) = match profile {
+                    OptimizationProfile::Memory => (r.bytes, pages),
+                    OptimizationProfile::Performance => (pages, r.bytes),
+                    OptimizationProfile::Balanced => (r.bytes.saturating_add(pages.saturating_mul(262144)), r.bytes),
+                };
+                (primary, secondary, r.width.abs_diff(r.height), r.width)
+            };
             if best.as_ref().is_none_or(|old| score(&result) < score(old)) {
                 best = Some(result);
             }
@@ -327,8 +352,8 @@ pub fn optimize(
     pack_internal(
         sources,
         AtlasOptions {
-            width: 4096,
-            height: 4096,
+            width: limit,
+            height: limit,
             ..options
         },
         true,
@@ -364,6 +389,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pages.len(), best.pages);
+    }
+
+    #[test]
+    fn profiles_respect_limits_and_priorities() {
+        let sources = (0..3).map(|i| SourceImage { name: format!("sprite-{i}"), image: RgbaImage::new(128, 128) }).collect::<Vec<_>>();
+        let options = AtlasOptions { trim: false, padding: 0, ..AtlasOptions::default() };
+        let memory = optimize_with(&sources, options, OptimizationProfile::Memory, 256).unwrap();
+        let performance = optimize_with(&sources, options, OptimizationProfile::Performance, 256).unwrap();
+        let balanced = optimize_with(&sources, options, OptimizationProfile::Balanced, 256).unwrap();
+        assert_eq!(memory.pages, 3);
+        assert_eq!(performance.pages, 1);
+        assert_eq!(balanced.pages, 1);
+        assert_eq!(optimize_with(&sources, options, OptimizationProfile::Performance, 128).unwrap().pages, 3);
     }
 
     #[test]
