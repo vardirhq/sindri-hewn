@@ -1,5 +1,5 @@
 //! Browser bridge for the canonical Rust atlas implementation.
-use hewn_core::{pack, AtlasOptions, SourceImage};
+use hewn_core::{pack_pages, AtlasOptions, SourceImage};
 use image::RgbaImage;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
@@ -13,7 +13,7 @@ struct InputSprite {
 
 #[wasm_bindgen]
 pub struct PackedAtlas {
-    pixels: Vec<u8>,
+    pixels: Vec<Vec<u8>>,
     width: u32,
     height: u32,
     frames_json: String,
@@ -31,8 +31,12 @@ impl PackedAtlas {
         self.height
     }
 
-    pub fn pixels(&self) -> Vec<u8> {
-        self.pixels.clone()
+    pub fn page_count(&self) -> usize {
+        self.pixels.len()
+    }
+
+    pub fn pixels(&self, page: usize) -> Vec<u8> {
+        self.pixels.get(page).cloned().unwrap_or_default()
     }
 
     pub fn frames_json(&self) -> String {
@@ -76,11 +80,16 @@ pub fn pack_rgba(
     if offset != pixels.len() {
         return Err(JsValue::from_str("Sprite pixel buffer has trailing bytes"));
     }
-    let atlas = pack(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let frames_json = serde_json::to_string(&atlas.frames)
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let pages =
+        pack_pages(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let frames_json =
+        serde_json::to_string(&pages.iter().map(|page| &page.frames).collect::<Vec<_>>())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
     Ok(PackedAtlas {
-        pixels: atlas.image.into_raw(),
+        pixels: pages
+            .into_iter()
+            .map(|page| page.image.into_raw())
+            .collect(),
         width: options.width,
         height: options.height,
         frames_json,

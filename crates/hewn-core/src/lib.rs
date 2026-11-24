@@ -165,17 +165,40 @@ fn occupy(free: &mut Vec<Rect>, used: Rect) {
 /// Deterministic best-short-side-fit rectangle packing. Input order is
 /// preserved in frame metadata, and ties favor top-left placement.
 pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, AtlasError> {
+    let mut pages = pack_internal(sources, options, false)?;
+    Ok(pages.remove(0))
+}
+
+/// Pack into as many pages as needed, trying existing pages before allocating another.
+pub fn pack_pages(
+    sources: &[SourceImage],
+    options: AtlasOptions,
+) -> Result<Vec<Atlas>, AtlasError> {
+    pack_internal(sources, options, true)
+}
+
+fn pack_internal(
+    sources: &[SourceImage],
+    options: AtlasOptions,
+    multiple: bool,
+) -> Result<Vec<Atlas>, AtlasError> {
     if options.width == 0 || options.height == 0 {
         return Err(AtlasError::InvalidDimensions);
     }
-    let mut atlas = RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0]));
-    let mut free = vec![Rect {
-        x: 0,
-        y: 0,
-        w: options.width,
-        h: options.height,
-    }];
-    let mut frames = Vec::with_capacity(sources.len());
+    let new_page = || Atlas {
+        image: RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0])),
+        frames: Vec::new(),
+    };
+    let new_free = || {
+        vec![Rect {
+            x: 0,
+            y: 0,
+            w: options.width,
+            h: options.height,
+        }]
+    };
+    let mut pages = vec![new_page()];
+    let mut regions = vec![new_free()];
     for source in sources {
         let original = &source.image;
         let (offset_x, offset_y, width, height) = if options.trim {
@@ -196,16 +219,32 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         // Padding is a gap between sprites, not a mandatory outer border.
         let padded_w = width.saturating_add(options.padding).min(options.width);
         let padded_h = height.saturating_add(options.padding).min(options.height);
-        let candidate = free
+        let choose = |free: &[Rect]| {
+            free.iter()
+                .filter(|r| r.w >= padded_w && r.h >= padded_h)
+                .min_by_key(|r| {
+                    let dx = r.w - padded_w;
+                    let dy = r.h - padded_h;
+                    (dx.min(dy), dx.max(dy), r.y, r.x)
+                })
+                .copied()
+        };
+        let (page, candidate) = match regions
             .iter()
-            .filter(|r| r.w >= padded_w && r.h >= padded_h)
-            .min_by_key(|r| {
-                let dx = r.w - padded_w;
-                let dy = r.h - padded_h;
-                (dx.min(dy), dx.max(dy), r.y, r.x)
-            })
-            .copied()
-            .ok_or_else(fail)?;
+            .enumerate()
+            .find_map(|(i, free)| choose(free).map(|r| (i, r)))
+        {
+            Some(found) => found,
+            None if multiple => {
+                let free = new_free();
+                let candidate = choose(&free).ok_or_else(fail)?;
+                regions.push(free);
+                pages.push(new_page());
+                (pages.len() - 1, candidate)
+            }
+            None => return Err(fail()),
+        };
+        let atlas = &mut pages[page];
         let used = Rect {
             x: candidate.x,
             y: candidate.y,
@@ -214,14 +253,14 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         };
         for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
             for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
-                atlas.put_pixel(
+                atlas.image.put_pixel(
                     used.x + dx,
                     used.y + dy,
                     *original.get_pixel(offset_x + dx, offset_y + dy),
                 );
             }
         }
-        frames.push(Frame {
+        atlas.frames.push(Frame {
             name: source.name.clone(),
             x: used.x,
             y: used.y,
@@ -232,12 +271,9 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
             offset_x,
             offset_y,
         });
-        occupy(&mut free, used);
+        occupy(&mut regions[page], used);
     }
-    Ok(Atlas {
-        image: atlas,
-        frames,
-    })
+    Ok(pages)
 }
 
 #[cfg(test)]
@@ -371,6 +407,29 @@ mod tests {
                 assert!(gap_x || gap_y);
             }
         }
+    }
+
+    #[test]
+    fn overflow_creates_pages_without_losing_frames() {
+        let sources = (0..3)
+            .map(|i| SourceImage {
+                name: format!("sprite-{i}"),
+                image: RgbaImage::from_pixel(4, 4, Rgba([i, 0, 0, 255])),
+            })
+            .collect::<Vec<_>>();
+        let options = AtlasOptions {
+            width: 4,
+            height: 4,
+            padding: 0,
+            trim: false,
+        };
+        let pages = pack_pages(&sources, options).unwrap();
+        assert_eq!(pages.len(), 3);
+        for (i, page) in pages.iter().enumerate() {
+            assert_eq!(page.frames[0].name, sources[i].name);
+            assert_eq!(page.image, sources[i].image);
+        }
+        assert!(pack(&sources, options).is_err());
     }
 
     #[test]

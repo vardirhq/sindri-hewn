@@ -13,6 +13,7 @@ export type Sprite = {
 };
 
 export type Frame = {
+  page: number;
   name: string;
   x: number;
   y: number;
@@ -65,6 +66,6 @@ export function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function saveAtlas(canvas: HTMLCanvasElement) {
-  canvas.toBlob(blob => { if (blob) saveBlob(blob, "hewn-atlas.png"); }, "image/png");
+export function saveAtlas(canvas: HTMLCanvasElement, name = "hewn-atlas.png") {
+  canvas.toBlob(blob => { if (blob) saveBlob(blob, name); }, "image/png");
 }
