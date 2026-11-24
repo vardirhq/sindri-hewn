@@ -80,15 +80,101 @@ fn alpha_bounds(image: &RgbaImage) -> (u32, u32, u32, u32) {
     }
 }
 
-/// Deterministic shelf packing. Favor predictable behavior and metadata over
-/// pretending to maximize packing efficiency; better algorithms can replace
-/// this later without changing the metadata format.
+/// A free region in the atlas. Coordinates are half-open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Rect {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+impl Rect {
+    fn intersects(self, other: Self) -> bool {
+        self.x < other.x + other.w
+            && other.x < self.x + self.w
+            && self.y < other.y + other.h
+            && other.y < self.y + self.h
+    }
+
+    fn contains(self, other: Self) -> bool {
+        other.x >= self.x
+            && other.y >= self.y
+            && other.x + other.w <= self.x + self.w
+            && other.y + other.h <= self.y + self.h
+    }
+}
+
+/// Subtract an occupied rectangle from every intersecting free region.
+/// Overlapping free regions are permitted; containment pruning keeps the
+/// candidate set compact. This is a deterministic MaxRects-style strategy.
+fn occupy(free: &mut Vec<Rect>, used: Rect) {
+    let mut next = Vec::new();
+    for region in free.drain(..) {
+        if !region.intersects(used) {
+            next.push(region);
+            continue;
+        }
+        if used.x > region.x {
+            next.push(Rect {
+                x: region.x,
+                y: region.y,
+                w: used.x - region.x,
+                h: region.h,
+            });
+        }
+        if used.x + used.w < region.x + region.w {
+            next.push(Rect {
+                x: used.x + used.w,
+                y: region.y,
+                w: region.x + region.w - used.x - used.w,
+                h: region.h,
+            });
+        }
+        if used.y > region.y {
+            next.push(Rect {
+                x: region.x,
+                y: region.y,
+                w: region.w,
+                h: used.y - region.y,
+            });
+        }
+        if used.y + used.h < region.y + region.h {
+            next.push(Rect {
+                x: region.x,
+                y: used.y + used.h,
+                w: region.w,
+                h: region.y + region.h - used.y - used.h,
+            });
+        }
+    }
+    next.retain(|r| r.w > 0 && r.h > 0);
+    let mut i = 0;
+    while i < next.len() {
+        if (0..next.len())
+            .any(|j| i != j && next[j].contains(next[i]) && (j < i || next[j] != next[i]))
+        {
+            next.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    *free = next;
+}
+
+/// Deterministic best-short-side-fit rectangle packing. Input order is
+/// preserved in frame metadata, and ties favor top-left placement.
 pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, AtlasError> {
     if options.width == 0 || options.height == 0 {
         return Err(AtlasError::InvalidDimensions);
     }
     let mut atlas = RgbaImage::from_pixel(options.width, options.height, Rgba([0, 0, 0, 0]));
-    let (mut cursor_x, mut cursor_y, mut row_height) = (0u32, 0u32, 0u32);
+    let mut free = vec![Rect {
+        x: 0,
+        y: 0,
+        w: options.width,
+        h: options.height,
+    }];
     let mut frames = Vec::with_capacity(sources.len());
     for source in sources {
         let original = &source.image;
@@ -97,47 +183,48 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         } else {
             (0, 0, original.width().max(1), original.height().max(1))
         };
-        let padded_width = width.saturating_add(options.padding);
-        let padded_height = height.saturating_add(options.padding);
+        let fail = || AtlasError::DoesNotFit {
+            name: source.name.clone(),
+            width,
+            height,
+            atlas_width: options.width,
+            atlas_height: options.height,
+        };
         if width > options.width || height > options.height {
-            return Err(AtlasError::DoesNotFit {
-                name: source.name.clone(),
-                width,
-                height,
-                atlas_width: options.width,
-                atlas_height: options.height,
-            });
+            return Err(fail());
         }
-        if cursor_x > 0 && padded_width > options.width - cursor_x {
-            cursor_x = 0;
-            cursor_y = cursor_y.saturating_add(row_height);
-            row_height = 0;
-        }
-        if cursor_y > options.height
-            || height > options.height - cursor_y
-            || width > options.width - cursor_x
-        {
-            return Err(AtlasError::DoesNotFit {
-                name: source.name.clone(),
-                width,
-                height,
-                atlas_width: options.width,
-                atlas_height: options.height,
-            });
-        }
+        // Padding is a gap between sprites, not a mandatory outer border.
+        let padded_w = width.saturating_add(options.padding).min(options.width);
+        let padded_h = height.saturating_add(options.padding).min(options.height);
+        let candidate = free
+            .iter()
+            .filter(|r| r.w >= padded_w && r.h >= padded_h)
+            .min_by_key(|r| {
+                let dx = r.w - padded_w;
+                let dy = r.h - padded_h;
+                (dx.min(dy), dx.max(dy), r.y, r.x)
+            })
+            .copied()
+            .ok_or_else(fail)?;
+        let used = Rect {
+            x: candidate.x,
+            y: candidate.y,
+            w: padded_w,
+            h: padded_h,
+        };
         for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
             for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
                 atlas.put_pixel(
-                    cursor_x + dx,
-                    cursor_y + dy,
+                    used.x + dx,
+                    used.y + dy,
                     *original.get_pixel(offset_x + dx, offset_y + dy),
                 );
             }
         }
         frames.push(Frame {
             name: source.name.clone(),
-            x: cursor_x,
-            y: cursor_y,
+            x: used.x,
+            y: used.y,
             width,
             height,
             source_width: original.width(),
@@ -145,8 +232,7 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
             offset_x,
             offset_y,
         });
-        cursor_x += padded_width;
-        row_height = row_height.max(padded_height);
+        occupy(&mut free, used);
     }
     Ok(Atlas {
         image: atlas,
@@ -198,7 +284,11 @@ mod tests {
         let a = pack(&images, options).unwrap();
         let b = pack(&images, options).unwrap();
         assert_eq!(a.frames, b.frames);
-        assert_eq!((a.frames[2].x, a.frames[2].y), (0, 4));
+        assert_eq!(a.frames.len(), 3);
+        assert!(a
+            .frames
+            .iter()
+            .all(|frame| frame.x + frame.width <= 8 && frame.y + frame.height <= 12));
     }
 
     #[test]
@@ -217,6 +307,70 @@ mod tests {
             },
         );
         assert!(matches!(result, Err(AtlasError::DoesNotFit { .. })));
+    }
+
+    #[test]
+    fn packs_into_gaps_that_shelves_waste() {
+        let sizes = [(6, 4), (4, 6), (2, 6)];
+        let sources = sizes
+            .iter()
+            .enumerate()
+            .map(|(i, &(w, h))| SourceImage {
+                name: format!("tile-{i}"),
+                image: RgbaImage::from_pixel(w, h, Rgba([i as u8, 20, 30, 255])),
+            })
+            .collect::<Vec<_>>();
+        let options = AtlasOptions {
+            width: 10,
+            height: 10,
+            padding: 0,
+            trim: false,
+        };
+        let atlas = pack(&sources, options).unwrap();
+        assert_eq!(atlas.frames.len(), 3);
+        for (i, a) in atlas.frames.iter().enumerate() {
+            for b in atlas.frames.iter().skip(i + 1) {
+                assert!(!Rect {
+                    x: a.x,
+                    y: a.y,
+                    w: a.width,
+                    h: a.height
+                }
+                .intersects(Rect {
+                    x: b.x,
+                    y: b.y,
+                    w: b.width,
+                    h: b.height
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn padding_keeps_frames_apart() {
+        let sources = (0..4)
+            .map(|i| SourceImage {
+                name: format!("tile-{i}"),
+                image: RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
+            })
+            .collect::<Vec<_>>();
+        let atlas = pack(
+            &sources,
+            AtlasOptions {
+                width: 8,
+                height: 8,
+                padding: 1,
+                trim: false,
+            },
+        )
+        .unwrap();
+        for (i, a) in atlas.frames.iter().enumerate() {
+            for b in atlas.frames.iter().skip(i + 1) {
+                let gap_x = a.x + a.width < b.x || b.x + b.width < a.x;
+                let gap_y = a.y + a.height < b.y || b.y + b.height < a.y;
+                assert!(gap_x || gap_y);
+            }
+        }
     }
 
     #[test]
