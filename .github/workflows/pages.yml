@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -15,12 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    name: Build and deploy Hewn
+  build:
+    name: Build Hewn
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,5 +41,28 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist
+  deploy:
+    name: Deploy Hewn
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Wait for Pages artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          for attempt in {1..12}; do
+            if count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=github-pages" --jq '[.artifacts[] | select(.name == "github-pages" and .expired == false)] | length') && [[ "$count" == "1" ]]; then
+              echo "Pages artifact is available."
+              exit 0
+            fi
+            echo "Waiting for Pages artifact (attempt $attempt/12)"
+            sleep 5
+          done
+          echo "::error::Expected exactly one available github-pages artifact."
+          exit 1
       - id: deployment
         uses: actions/deploy-pages@v4
