@@ -89,8 +89,8 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         } else {
             (0, 0, original.width().max(1), original.height().max(1))
         };
-        let padded_width = width.checked_add(options.padding).unwrap_or(u32::MAX);
-        let padded_height = height.checked_add(options.padding).unwrap_or(u32::MAX);
+        let padded_width = width.saturating_add(options.padding);
+        let padded_height = height.saturating_add(options.padding);
         if width > options.width || height > options.height {
             return Err(AtlasError::DoesNotFit {
                 name: source.name.clone(), width, height,
@@ -99,7 +99,7 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         }
         if cursor_x > 0 && padded_width > options.width - cursor_x {
             cursor_x = 0;
-            cursor_y = cursor_y.checked_add(row_height).unwrap_or(u32::MAX);
+            cursor_y = cursor_y.saturating_add(row_height);
             row_height = 0;
         }
         if cursor_y > options.height || height > options.height - cursor_y
