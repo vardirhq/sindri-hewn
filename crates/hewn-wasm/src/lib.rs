@@ -1,5 +1,5 @@
 //! Browser bridge for the canonical Rust atlas implementation.
-use hewn_core::{pack_pages, AtlasOptions, SourceImage};
+use hewn_core::{optimize, pack_pages, AtlasOptions, SourceImage};
 use image::RgbaImage;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
@@ -52,10 +52,28 @@ pub fn pack_rgba(
     manifest_json: &str,
     options_json: &str,
 ) -> Result<PackedAtlas, JsValue> {
-    let manifest: Vec<InputSprite> = serde_json::from_str(manifest_json)
-        .map_err(|error| JsValue::from_str(&format!("Invalid sprite manifest: {error}")))?;
     let options: AtlasOptions = serde_json::from_str(options_json)
         .map_err(|error| JsValue::from_str(&format!("Invalid atlas options: {error}")))?;
+    let sources = decode_sources(pixels, manifest_json)?;
+    let pages =
+        pack_pages(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let frames_json =
+        serde_json::to_string(&pages.iter().map(|page| &page.frames).collect::<Vec<_>>())
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    Ok(PackedAtlas {
+        pixels: pages
+            .into_iter()
+            .map(|page| page.image.into_raw())
+            .collect(),
+        width: options.width,
+        height: options.height,
+        frames_json,
+    })
+}
+
+fn decode_sources(pixels: &[u8], manifest_json: &str) -> Result<Vec<SourceImage>, JsValue> {
+    let manifest: Vec<InputSprite> = serde_json::from_str(manifest_json)
+        .map_err(|error| JsValue::from_str(&format!("Invalid sprite manifest: {error}")))?;
     let mut offset = 0usize;
     let mut sources = Vec::with_capacity(manifest.len());
     for sprite in manifest {
@@ -80,18 +98,14 @@ pub fn pack_rgba(
     if offset != pixels.len() {
         return Err(JsValue::from_str("Sprite pixel buffer has trailing bytes"));
     }
-    let pages =
-        pack_pages(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let frames_json =
-        serde_json::to_string(&pages.iter().map(|page| &page.frames).collect::<Vec<_>>())
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-    Ok(PackedAtlas {
-        pixels: pages
-            .into_iter()
-            .map(|page| page.image.into_raw())
-            .collect(),
-        width: options.width,
-        height: options.height,
-        frames_json,
-    })
+    Ok(sources)
+}
+
+#[wasm_bindgen]
+pub fn optimize_rgba(pixels: &[u8], manifest_json: &str, options_json: &str) -> Result<String, JsValue> {
+    let options: AtlasOptions = serde_json::from_str(options_json)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let sources = decode_sources(pixels, manifest_json)?;
+    let result = optimize(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    serde_json::to_string(&result).map_err(|error| JsValue::from_str(&error.to_string()))
 }
