@@ -112,8 +112,9 @@ pub fn optimize_rgba(
     let options: AtlasOptions = serde_json::from_str(options_json)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     let sources = decode_sources(pixels, manifest_json)?;
-    let profile: OptimizationProfile = serde_json::from_str(profile_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let result =
-        optimize_with(&sources, options, profile, limit).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let profile: OptimizationProfile = serde_json::from_str(profile_json)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let result = optimize_with(&sources, options, profile, limit)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
     serde_json::to_string(&result).map_err(|error| JsValue::from_str(&error.to_string()))
 }
