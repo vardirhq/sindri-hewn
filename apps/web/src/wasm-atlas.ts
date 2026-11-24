@@ -1,4 +1,4 @@
-import init, { pack_rgba } from "./generated/hewn_wasm.js";
+import init, { pack_rgba, optimize_rgba } from "./generated/hewn_wasm.js";
 import type { Frame, Sprite } from "./atlas";
 
 let initialized: Promise<void> | undefined;
@@ -15,22 +15,7 @@ export async function createAtlas(
   sprites: Sprite[], width: number, height: number, padding: number, trim: boolean
 ): Promise<{ canvases: HTMLCanvasElement[]; frames: Frame[] }> {
   await ready();
-  const manifest = sprites.map(({ name, width, height }) => ({ name, width, height }));
-  const total = sprites.reduce((sum, s) => sum + s.width * s.height * 4, 0);
-  const pixels = new Uint8Array(total);
-  let offset = 0;
-  const sourceCanvas = document.createElement("canvas");
-  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) throw new Error("Canvas is unavailable");
-  for (const sprite of sprites) {
-    sourceCanvas.width = sprite.width;
-    sourceCanvas.height = sprite.height;
-    ctx.clearRect(0, 0, sprite.width, sprite.height);
-    ctx.drawImage(sprite.image, 0, 0);
-    const data = ctx.getImageData(0, 0, sprite.width, sprite.height).data;
-    pixels.set(data, offset);
-    offset += data.length;
-  }
+  const { pixels, manifest } = encodeSprites(sprites);
   const atlas = pack_rgba(pixels, JSON.stringify(manifest), JSON.stringify({ width, height, padding, trim }));
   try {
     const canvases = Array.from({ length: atlas.page_count() }, (_, page) => {
@@ -56,4 +41,32 @@ export async function createAtlas(
   } finally {
     atlas.free();
   }
+}
+
+function encodeSprites(sprites: Sprite[]) {
+  const manifest = sprites.map(({ name, width, height }) => ({ name, width, height }));
+  const total = sprites.reduce((sum, s) => sum + s.width * s.height * 4, 0);
+  const pixels = new Uint8Array(total);
+  let offset = 0;
+  const sourceCanvas = document.createElement("canvas");
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas is unavailable");
+  for (const sprite of sprites) {
+    sourceCanvas.width = sprite.width;
+    sourceCanvas.height = sprite.height;
+    ctx.clearRect(0, 0, sprite.width, sprite.height);
+    ctx.drawImage(sprite.image, 0, 0);
+    const data = ctx.getImageData(0, 0, sprite.width, sprite.height).data;
+    pixels.set(data, offset);
+    offset += data.length;
+  }
+  return { pixels, manifest };
+}
+
+export type Recommendation = { width: number; height: number; pages: number; bytes: number };
+
+export async function optimizeAtlas(sprites: Sprite[], padding: number, trim: boolean): Promise<Recommendation> {
+  await ready();
+  const { pixels, manifest } = encodeSprites(sprites);
+  return JSON.parse(optimize_rgba(pixels, JSON.stringify(manifest), JSON.stringify({ width: 128, height: 128, padding, trim }))) as Recommendation;
 }
