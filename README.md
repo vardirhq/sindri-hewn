@@ -2,6 +2,8 @@
 
 **Raw assets, refined.**
 
+See [ROADMAP.md](ROADMAP.md) for the full product vision, feature plan, architecture, priorities, and acceptance criteria.
+
 Hewn is an offline-first, non-destructive game asset preparation studio. Organize loose PNG sprites, trim transparent edges, and build texture atlases with source offsets preserved.
 
 ## Current state
