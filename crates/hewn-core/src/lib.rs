@@ -19,7 +19,12 @@ pub struct AtlasOptions {
 
 impl Default for AtlasOptions {
     fn default() -> Self {
-        Self { width: 1024, height: 1024, padding: 2, trim: true }
+        Self {
+            width: 1024,
+            height: 1024,
+            padding: 2,
+            trim: true,
+        }
     }
 }
 
@@ -68,8 +73,11 @@ fn alpha_bounds(image: &RgbaImage) -> (u32, u32, u32, u32) {
             bottom = bottom.max(y + 1);
         }
     }
-    if left == image.width() { (0, 0, 1, 1) }
-    else { (left, top, right - left, bottom - top) }
+    if left == image.width() {
+        (0, 0, 1, 1)
+    } else {
+        (left, top, right - left, bottom - top)
+    }
 }
 
 /// Deterministic shelf packing. Favor predictable behavior and metadata over
@@ -93,8 +101,11 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
         let padded_height = height.saturating_add(options.padding);
         if width > options.width || height > options.height {
             return Err(AtlasError::DoesNotFit {
-                name: source.name.clone(), width, height,
-                atlas_width: options.width, atlas_height: options.height
+                name: source.name.clone(),
+                width,
+                height,
+                atlas_width: options.width,
+                atlas_height: options.height,
             });
         }
         if cursor_x > 0 && padded_width > options.width - cursor_x {
@@ -102,28 +113,45 @@ pub fn pack(sources: &[SourceImage], options: AtlasOptions) -> Result<Atlas, Atl
             cursor_y = cursor_y.saturating_add(row_height);
             row_height = 0;
         }
-        if cursor_y > options.height || height > options.height - cursor_y
-            || width > options.width - cursor_x {
+        if cursor_y > options.height
+            || height > options.height - cursor_y
+            || width > options.width - cursor_x
+        {
             return Err(AtlasError::DoesNotFit {
-                name: source.name.clone(), width, height,
-                atlas_width: options.width, atlas_height: options.height
+                name: source.name.clone(),
+                width,
+                height,
+                atlas_width: options.width,
+                atlas_height: options.height,
             });
         }
         for dy in 0..height.min(original.height().saturating_sub(offset_y)) {
             for dx in 0..width.min(original.width().saturating_sub(offset_x)) {
-                atlas.put_pixel(cursor_x + dx, cursor_y + dy,
-                    *original.get_pixel(offset_x + dx, offset_y + dy));
+                atlas.put_pixel(
+                    cursor_x + dx,
+                    cursor_y + dy,
+                    *original.get_pixel(offset_x + dx, offset_y + dy),
+                );
             }
         }
         frames.push(Frame {
-            name: source.name.clone(), x: cursor_x, y: cursor_y, width, height,
-            source_width: original.width(), source_height: original.height(),
-            offset_x, offset_y
+            name: source.name.clone(),
+            x: cursor_x,
+            y: cursor_y,
+            width,
+            height,
+            source_width: original.width(),
+            source_height: original.height(),
+            offset_x,
+            offset_y,
         });
         cursor_x += padded_width;
         row_height = row_height.max(padded_height);
     }
-    Ok(Atlas { image: atlas, frames })
+    Ok(Atlas {
+        image: atlas,
+        frames,
+    })
 }
 
 #[cfg(test)]
@@ -134,8 +162,19 @@ mod tests {
     fn trims_and_preserves_source_offsets() {
         let mut src = RgbaImage::new(8, 8);
         src.put_pixel(3, 4, Rgba([255, 0, 0, 255]));
-        let atlas = pack(&[SourceImage { name: "red".into(), image: src }],
-            AtlasOptions { width: 8, height: 8, padding: 2, trim: true }).unwrap();
+        let atlas = pack(
+            &[SourceImage {
+                name: "red".into(),
+                image: src,
+            }],
+            AtlasOptions {
+                width: 8,
+                height: 8,
+                padding: 2,
+                trim: true,
+            },
+        )
+        .unwrap();
         assert_eq!(atlas.frames[0].offset_x, 3);
         assert_eq!(atlas.frames[0].offset_y, 4);
         assert_eq!(atlas.frames[0].width, 1);
@@ -144,11 +183,18 @@ mod tests {
 
     #[test]
     fn deterministic_with_row_breaks() {
-        let images = (0..3).map(|i| SourceImage {
-            name: format!("sprite-{i}"),
-            image: RgbaImage::from_pixel(3, 3, Rgba([255, 255, 255, 255])),
-        }).collect::<Vec<_>>();
-        let options = AtlasOptions { width: 8, height: 12, padding: 1, trim: false };
+        let images = (0..3)
+            .map(|i| SourceImage {
+                name: format!("sprite-{i}"),
+                image: RgbaImage::from_pixel(3, 3, Rgba([255, 255, 255, 255])),
+            })
+            .collect::<Vec<_>>();
+        let options = AtlasOptions {
+            width: 8,
+            height: 12,
+            padding: 1,
+            trim: false,
+        };
         let a = pack(&images, options).unwrap();
         let b = pack(&images, options).unwrap();
         assert_eq!(a.frames, b.frames);
@@ -158,15 +204,31 @@ mod tests {
     #[test]
     fn reports_overflow_instead_of_dropping_sprites() {
         let image = RgbaImage::from_pixel(5, 5, Rgba([0, 0, 0, 255]));
-        let result = pack(&[SourceImage { name: "large".into(), image }],
-            AtlasOptions { width: 4, height: 4, padding: 0, trim: true });
+        let result = pack(
+            &[SourceImage {
+                name: "large".into(),
+                image,
+            }],
+            AtlasOptions {
+                width: 4,
+                height: 4,
+                padding: 0,
+                trim: true,
+            },
+        );
         assert!(matches!(result, Err(AtlasError::DoesNotFit { .. })));
     }
 
     #[test]
     fn empty_image_has_stable_placeholder() {
-        let result = pack(&[SourceImage { name: "empty".into(), image: RgbaImage::new(2, 2) }],
-            AtlasOptions::default()).unwrap();
+        let result = pack(
+            &[SourceImage {
+                name: "empty".into(),
+                image: RgbaImage::new(2, 2),
+            }],
+            AtlasOptions::default(),
+        )
+        .unwrap();
         assert_eq!((result.frames[0].width, result.frames[0].height), (1, 1));
         assert_eq!(result.image.get_pixel(0, 0)[3], 0);
     }
