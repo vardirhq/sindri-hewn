@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowDownToLine, Check, ChevronDown, ChevronRight, FileImage, FolderOpen, Grid3X3, Layers3, Maximize, PackageOpen, Plus, Settings2, Sparkles, Trash2, UploadCloud } from "lucide-react";
 import { loadSprite, saveAtlas, saveBlob, type Sprite, type Frame } from "./atlas";
-import { createAtlas } from "./wasm-atlas";
+import { createAtlas, optimizeAtlas, type Recommendation } from "./wasm-atlas";
 
 const DEMO = [
   {name:"fern", color:"#68bb7d", shape:"leaf"},
@@ -68,6 +68,21 @@ export function App() {
     });
     if (failures) setError(`${failures} image(s) could not be loaded.`);
   }, []);
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [optimizing, setOptimizing] = useState(false);
+  useEffect(() => { setRecommendation(null); }, [sprites, padding, trim, width, height]);
+  const autoOptimize = async () => {
+    setOptimizing(true);
+    setError("");
+    try {
+      const best = await optimizeAtlas(sprites, padding, trim);
+      setRecommendation(best);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setOptimizing(false);
+    }
+  };
   const [page, setPage] = useState(0);
   const [result, setResult] = useState<{ canvases: HTMLCanvasElement[]; frames: Frame[]; error: string } | null>(null);
   useEffect(() => {
@@ -137,7 +152,9 @@ export function App() {
     <aside className="inspector">
       <div className="inspector-title"><Settings2 size={17}/> Inspector</div>
       {active ? <div className="inspector-section"><div className="label">SELECTED SPRITE</div><div className="selected-sprite"><img src={active.preview} alt={active.name}/></div><strong>{active.name}</strong><div className="stat"><span>Original size</span><strong>{active.width} × {active.height}</strong></div><div className="stat"><span>Trimmed size</span><strong>{active.trimWidth} × {active.trimHeight}</strong></div><div className="stat"><span>Offset</span><strong>{active.offsetX}, {active.offsetY}</strong></div></div> : null}
-      <div className="inspector-section"><div className="label">ATLAS SETTINGS</div><label className="field">Width<select value={width} onChange={e=>setWidth(Number(e.target.value))}>{[128,256,512,1024,2048,4096].map(n=><option key={n} value={n}>{n} px</option>)}</select></label><label className="field">Height<select value={height} onChange={e=>setHeight(Number(e.target.value))}>{[128,256,512,1024,2048,4096].map(n=><option key={n} value={n}>{n} px</option>)}</select></label><label className="field">Padding<input type="number" min="0" max="64" value={padding} onChange={e=>setPadding(Math.min(64,Math.max(0,Number(e.target.value)||0)))}/></label>
+      <div className="inspector-section"><div className="label">ATLAS SETTINGS</div>
+      <button className="secondary-button" disabled={!sprites.length || optimizing} onClick={()=>void autoOptimize()}><Sparkles size={15}/> {optimizing ? "Optimizing…" : "Auto Optimize"}</button>
+      {recommendation && <div role="status"><p>Recommended: {recommendation.width} × {recommendation.height}, {recommendation.pages} page(s), {(recommendation.bytes / 1024).toFixed(0)} KiB RGBA8. Lowest memory across 36 tested sizes; fewer pages break ties.</p><button className="secondary-button" onClick={()=>{setWidth(recommendation.width);setHeight(recommendation.height);setRecommendation(null);}}>Apply recommendation</button></div>}<label className="field">Width<select value={width} onChange={e=>setWidth(Number(e.target.value))}>{[128,256,512,1024,2048,4096].map(n=><option key={n} value={n}>{n} px</option>)}</select></label><label className="field">Height<select value={height} onChange={e=>setHeight(Number(e.target.value))}>{[128,256,512,1024,2048,4096].map(n=><option key={n} value={n}>{n} px</option>)}</select></label><label className="field">Padding<input type="number" min="0" max="64" value={padding} onChange={e=>setPadding(Math.min(64,Math.max(0,Number(e.target.value)||0)))}/></label>
         <label className="toggle-row"><span>Trim transparency<small>Remove unused transparent edges</small></span><input type="checkbox" checked={trim} onChange={e=>setTrim(e.target.checked)}/></label>
         <label className="toggle-row"><span>Checkerboard<small>Show transparent background</small></span><input type="checkbox" checked={showGrid} onChange={e=>setShowGrid(e.target.checked)}/></label>
       </div>
