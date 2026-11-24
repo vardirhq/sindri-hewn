@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ArrowDownToLine, Check, ChevronDown, ChevronRight, FileImage, FolderOpen, Grid3X3, Layers3, Maximize, PackageOpen, Plus, Settings2, Sparkles, Trash2, UploadCloud } from "lucide-react";
-import { createAtlas, loadSprite, saveAtlas, saveBlob, type Sprite } from "./atlas";
+import { loadSprite, saveAtlas, saveBlob, type Sprite, type Frame } from "./atlas";
+import { createAtlas } from "./wasm-atlas";
 
 const DEMO = [
   {name:"fern", color:"#68bb7d", shape:"leaf"},
@@ -67,10 +68,16 @@ export function App() {
     });
     if (failures) setError(`${failures} image(s) could not be loaded.`);
   }, []);
-  const result = useMemo(() => {
-    if (!sprites.length) return null;
-    try { return { ...createAtlas(sprites, width, height, padding, trim), error: "" }; }
-    catch (e) { return { canvas: null, frames: [], error: e instanceof Error ? e.message : String(e) }; }
+  const [result, setResult] = useState<{ canvas: HTMLCanvasElement | null; frames: Frame[]; error: string } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!sprites.length) { setResult(null); return; }
+    setResult(null);
+    void createAtlas(sprites, width, height, padding, trim).then(
+      atlas => { if (!cancelled) setResult({ ...atlas, error: "" }); },
+      reason => { if (!cancelled) setResult({ canvas: null, frames: [], error: String(reason) }); }
+    );
+    return () => { cancelled = true; };
   }, [sprites, width, height, padding, trim]);
   const preview = useMemo(() => result?.canvas?.toDataURL("image/png") ?? null, [result]);
   const active = sprites.find(s => s.name === selected);

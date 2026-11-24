@@ -1,4 +1,4 @@
-/** Browser-native prototype of atlas packing. WASM will unify this with hewn-core. */
+/** Sprite loading and browser export utilities. Packing runs in Rust/WASM. */
 export type Sprite = {
   name: string;
   width: number;
@@ -56,34 +56,6 @@ export function loadSprite(file: File): Promise<Sprite> {
     image.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`Cannot read ${file.name}`)); };
     image.src = url;
   });
-}
-
-export function createAtlas(
-  sprites: Sprite[], width: number, height: number, padding: number, trim: boolean
-): { canvas: HTMLCanvasElement; frames: Frame[] } {
-  const canvas = document.createElement("canvas");
-  canvas.width = width; canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Canvas is unavailable");
-  let x = 0, y = 0, rowHeight = 0;
-  const frames: Frame[] = [];
-  for (const sprite of sprites) {
-    const w = trim ? sprite.trimWidth : sprite.width;
-    const h = trim ? sprite.trimHeight : sprite.height;
-    if (w > width || h > height) throw new Error(`${sprite.name} is too large for this atlas`);
-    if (x > 0 && x + w > width) { x = 0; y += rowHeight; rowHeight = 0; }
-    if (y + h > height) throw new Error(`Atlas full: ${sprite.name} does not fit. Increase the dimensions.`);
-    const ox = trim ? sprite.offsetX : 0, oy = trim ? sprite.offsetY : 0;
-    ctx.drawImage(sprite.image, ox, oy, w, h, x, y, w, h);
-    frames.push({
-      name: sprite.name, x, y, width: w, height: h,
-      sourceWidth: sprite.width, sourceHeight: sprite.height,
-      offsetX: ox, offsetY: oy
-    });
-    x += w + padding;
-    rowHeight = Math.max(rowHeight, h + padding);
-  }
-  return { canvas, frames };
 }
 
 export function saveBlob(blob: Blob, name: string) {
