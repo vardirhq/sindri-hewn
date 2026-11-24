@@ -1,5 +1,5 @@
 //! Browser bridge for the canonical Rust atlas implementation.
-use hewn_core::{optimize, pack_pages, AtlasOptions, SourceImage};
+use hewn_core::{optimize_with, pack_pages, AtlasOptions, OptimizationProfile, SourceImage};
 use image::RgbaImage;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
@@ -106,11 +106,14 @@ pub fn optimize_rgba(
     pixels: &[u8],
     manifest_json: &str,
     options_json: &str,
+    profile_json: &str,
+    limit: u32,
 ) -> Result<String, JsValue> {
     let options: AtlasOptions = serde_json::from_str(options_json)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     let sources = decode_sources(pixels, manifest_json)?;
+    let profile: OptimizationProfile = serde_json::from_str(profile_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
     let result =
-        optimize(&sources, options).map_err(|error| JsValue::from_str(&error.to_string()))?;
+        optimize_with(&sources, options, profile, limit).map_err(|error| JsValue::from_str(&error.to_string()))?;
     serde_json::to_string(&result).map_err(|error| JsValue::from_str(&error.to_string()))
 }
